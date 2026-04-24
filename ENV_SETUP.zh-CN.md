@@ -104,6 +104,18 @@ conda activate llmffn
 
 如果你的机器无法访问 `repo.anaconda.com`，仓库里的 `environment.llmffn.yml` 已经默认切到清华镜像，并显式加了 `nodefaults`，避免 Conda 再回退到官方默认源。
 
+`requirements.llmffn.txt` 里的 `pip` 默认源也已经切到清华 PyPI 镜像，所以直接执行：
+
+```bash
+python3 -m pip install -r requirements.llmffn.txt
+```
+
+默认就会走：
+
+```text
+https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
 如果你更想手动创建一个空环境，也可以：
 
 ```bash
@@ -121,13 +133,25 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.llmffn.txt
 ```
 
+如果你想把当前账号的 `pip` 也永久切到清华源，可以额外执行：
+
+```bash
+mkdir -p ~/.pip
+cat > ~/.pip/pip.conf <<'EOF'
+[global]
+index-url = https://pypi.tuna.tsinghua.edu.cn/simple
+timeout = 120
+EOF
+```
+
 或者手动分两步装。先安装 PyTorch：
 
 ```bash
 python3 -m pip install \
   torch==2.5.1 \
   torchvision==0.20.1 \
-  torchaudio==2.5.1
+  torchaudio==2.5.1 \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 再安装本仓库当前验证过的关键 Python 依赖：

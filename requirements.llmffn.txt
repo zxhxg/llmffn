@@ -1,9 +1,8 @@
---index-url https://download.pytorch.org/whl/cu121
---extra-index-url https://pypi.org/simple
+--index-url https://pypi.org/simple
 
-torch==2.5.1+cu121
-torchvision==0.20.1+cu121
-torchaudio==2.5.1+cu121
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 accelerate==1.13.0
 bitsandbytes==0.49.2
 click==8.3.2

@@ -24,6 +24,7 @@
 - 当前 PyTorch 使用的是 `cu121` 轮子。
 - 当前 `ncu` 来自系统安装的 CUDA 12.9 工具链。
 - 这两个版本在这台机器上是可以共存并正常工作的。
+- 仓库里附带的安装清单现在默认采用更通用的 `torch==2.5.1` / `torchvision==0.20.1` / `torchaudio==2.5.1` 写法，目的是提高在集群和镜像环境中的安装成功率。
 
 ## 当前 llmffn 环境中的关键包
 
@@ -121,14 +122,13 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.llmffn.txt
 ```
 
-或者手动分两步装。先安装 PyTorch CUDA 12.1 轮子：
+或者手动分两步装。先安装 PyTorch：
 
 ```bash
 python3 -m pip install \
-  torch==2.5.1+cu121 \
-  torchvision==0.20.1+cu121 \
-  torchaudio==2.5.1+cu121 \
-  --index-url https://download.pytorch.org/whl/cu121
+  torch==2.5.1 \
+  torchvision==0.20.1 \
+  torchaudio==2.5.1
 ```
 
 再安装本仓库当前验证过的关键 Python 依赖：
@@ -159,6 +159,7 @@ python3 -m pip install \
 
 - `environment.llmffn.yml` 和 `requirements.llmffn.txt` 都是基于当前机器上已经验证通过的环境整理出来的。
 - 这两份文件只覆盖 Python 侧依赖，不会自动安装系统级工具，例如 `ncu`、NVIDIA 驱动、CUDA toolkit，也不会替你编译 `cutracer.so`。
+- 如果你的环境访问不到 `download.pytorch.org`，优先使用当前仓库附带的这两份清单；它们已经避免依赖 PyTorch CUDA 专用 wheel 索引。
 
 ## 配置模型
 

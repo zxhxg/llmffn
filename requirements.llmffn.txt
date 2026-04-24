@@ -1,0 +1,35 @@
+--index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://pypi.org/simple
+
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
+accelerate==1.13.0
+bitsandbytes==0.49.2
+click==8.3.2
+cutracer==0.2.1.dev19
+datasets==4.8.4
+huggingface_hub==0.36.2
+importlib_resources==7.1.0
+jsonschema==4.26.0
+modelscope==1.35.4
+numpy==2.2.6
+orjson==3.11.8
+pandas==2.3.3
+pillow==12.1.1
+psutil==7.2.2
+pyarrow==23.0.1
+PyYAML==6.0.3
+regex==2026.4.4
+requests==2.33.1
+rich==15.0.0
+safetensors==0.7.0
+sentencepiece==0.2.1
+tabulate==0.10.0
+tokenizers==0.19.1
+tqdm==4.67.3
+transformers==4.43.1
+triton==3.1.0
+tritonparse==0.4.3
+yscope-clp-core==0.9.1b1
+zstandard==0.25.0

@@ -1,0 +1,38 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local tooling
+.codex/
+
+# Large local assets
+models/
+
+# Generated trace / profiling outputs
+scripts/cutracer_ffn_trace/output/
+scripts/statistic/*output*/
+
+# Nsight Compute / CUTracer artifacts
+*.ncu-rep
+*.nsight-cuprof-report
+*.ndjson
+*.ndjson.zst
+*.clp
+*.cubin
+*.pt
+*.pth
+
+# Local extracted address dumps
+local.txt
+local.jsonl
+local.part*.jsonl

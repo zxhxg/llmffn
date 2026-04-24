@@ -21,6 +21,7 @@ models/
 # Generated trace / profiling outputs
 scripts/cutracer_ffn_trace/output/
 scripts/statistic/*output*/
+scripts/analyse/*output*/
 
 # Nsight Compute / CUTracer artifacts
 *.ncu-rep

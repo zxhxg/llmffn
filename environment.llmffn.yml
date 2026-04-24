@@ -1,6 +1,8 @@
 name: llmffn
 channels:
-  - defaults
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+  - nodefaults
 dependencies:
   - python=3.10
   - pip

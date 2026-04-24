@@ -102,6 +102,8 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate llmffn
 ```
 
+如果你的机器无法访问 `repo.anaconda.com`，仓库里的 `environment.llmffn.yml` 已经默认切到清华镜像，并显式加了 `nodefaults`，避免 Conda 再回退到官方默认源。
+
 如果你更想手动创建一个空环境，也可以：
 
 ```bash

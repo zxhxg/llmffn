@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    DEFAULT_CUTRACER_ROOT,
     DEFAULT_RUNS_DIR,
     SCRIPT_DIR,
     ensure_parent_dir,
@@ -165,8 +166,7 @@ def resolve_cutracer_so(explicit: Path | None) -> Path:
 
     candidates.extend(
         [
-            Path("/tmp/CUTracer/lib/cutracer.so"),
-            Path.home() / "CUTracer" / "lib" / "cutracer.so",
+            DEFAULT_CUTRACER_ROOT / "lib" / "cutracer.so",
             repo_root() / "lib" / "cutracer.so",
         ]
     )

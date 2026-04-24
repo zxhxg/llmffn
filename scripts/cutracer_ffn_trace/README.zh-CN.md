@@ -2,7 +2,7 @@
 
 这个目录提供了一套最小可用的两阶段工作流，用来借助 CUTracer 跟踪某一层 FFN 的真实访存序列。
 
-如果你是第一次在新机器上配置这个仓库，建议先看仓库根目录下的 [ENV_SETUP.zh-CN.md](/home/wlh/llmffn/ENV_SETUP.zh-CN.md:1)。
+如果你是第一次在新机器上配置这个仓库，建议先看仓库根目录下的 [ENV_SETUP.zh-CN.md](../../ENV_SETUP.zh-CN.md)。
 
 这套流程固定采用下面的 token 语义：
 
@@ -34,16 +34,10 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --cutracer-so /path/to/cutracer.so
 ```
 
-如果你本机是按常见方式把 CUTracer 放在家目录下，`cutracer.so` 往往会在：
+如果你按本仓库推荐方式把 CUTracer 放在仓库内的 `third_party/CUTracer/`，那么 `cutracer.so` 默认应位于：
 
 ```text
-~/CUTracer/lib/cutracer.so
-```
-
-旧实验环境里也可能是：
-
-```text
-/tmp/CUTracer/lib/cutracer.so
+third_party/CUTracer/lib/cutracer.so
 ```
 
 它会在下面的目录中为每次运行创建一个独立子目录：
@@ -153,7 +147,7 @@ scripts/cutracer_ffn_trace/output/processed/
 
 ```bash
 python3 scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
-  --run-dir scripts/cutracer_ffn_trace/output/runs/layer_24_20260422_111157 \
+  --run-dir scripts/cutracer_ffn_trace/output/runs/<your_run_dir> \
   --device-map auto
 ```
 
@@ -181,10 +175,11 @@ python3 scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
 python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --layer 24 \
   --device-map auto \
-  --cutracer-so /home/wlh/CUTracer/lib/cutracer.so \
+  --cutracer-so third_party/CUTracer/lib/cutracer.so \
   --processed-preview-lines 50
 
 python3 scripts/cutracer_ffn_trace/extract_addrs_to_jsonl.py   scripts/cutracer_ffn_trace/output/runs/layer_24_20260422_111157/processed_ffn_mem_sequence.jsonl   --output local.jsonl
 
-
-sudo -E /home/wlh/miniconda3/envs/llmffn/bin/python3   /home/wlh/llmffn/scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py   --run-dir /home/wlh/llmffn/scripts/cutracer_ffn_trace/output/runs/layer_24_20260422_111157   --device-map auto
+sudo -E "$(command -v python3)" scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
+  --run-dir scripts/cutracer_ffn_trace/output/runs/<your_run_dir> \
+  --device-map auto

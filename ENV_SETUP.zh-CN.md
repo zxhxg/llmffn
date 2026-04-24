@@ -14,10 +14,10 @@
 - Accelerate：`1.13.0`
 - CUDA 可见性：`torch.cuda.is_available() == True`
 - GPU 数量：`1`
-- Nsight Compute CLI：`/usr/local/cuda-12.9/bin/ncu`
-- Nsight Compute 版本：`2025.2.0.0`
-- CUTracer Python CLI：`/home/wlh/miniconda3/envs/llmffn/bin/cutracer`
-- `cutracer.so`：`/home/wlh/CUTracer/lib/cutracer.so`
+- Nsight Compute CLI：由 `which ncu` 动态解析
+- Nsight Compute 版本：本机验证时为 `2025.2.0.0`
+- CUTracer Python CLI：安装后由 `which cutracer` 动态解析
+- `cutracer.so`：推荐位于 `third_party/CUTracer/lib/cutracer.so`
 
 说明：
 
@@ -82,8 +82,8 @@ python3 -m pip list --format=freeze
 
 仓库里现在也附带了两份可直接复现的依赖清单：
 
-- [environment.llmffn.yml](/home/wlh/llmffn/environment.llmffn.yml:1)
-- [requirements.llmffn.txt](/home/wlh/llmffn/requirements.llmffn.txt:1)
+- [environment.llmffn.yml](environment.llmffn.yml)
+- [requirements.llmffn.txt](requirements.llmffn.txt)
 
 ### 1. 克隆仓库
 
@@ -183,14 +183,14 @@ python3 -m pip install \
 - `environment.llmffn.yml` 和 `requirements.llmffn.txt` 都是基于当前机器上已经验证通过的环境整理出来的。
 - 这两份文件只覆盖 Python 侧依赖，不会自动安装系统级工具，例如 `ncu`、NVIDIA 驱动、CUDA toolkit，也不会替你编译 `cutracer.so`。
 - 如果你的环境访问不到 `download.pytorch.org`，优先使用当前仓库附带的这两份清单；它们已经避免依赖 PyTorch CUDA 专用 wheel 索引。
-- `cutracer` 不再放进通用依赖清单里统一安装，因为它通常应当和你本地编译出的 `cutracer.so` 配套；推荐始终在 `~/CUTracer/python` 目录里执行 `pip install .` 或 `pip install -e .`。
+- `cutracer` 不再放进通用依赖清单里统一安装，因为它通常应当和你本地编译出的 `cutracer.so` 配套；推荐始终在 `third_party/CUTracer/python` 目录里执行 `pip install .` 或 `pip install -e .`。
 
 ## 配置模型
 
-当前脚本默认会从 [scripts/statistic/run_fp16.py](/home/wlh/llmffn/scripts/statistic/run_fp16.py:1) 读取默认模型路径：
+当前脚本默认会从 [scripts/statistic/run_fp16.py](scripts/statistic/run_fp16.py) 读取默认模型路径：
 
 ```python
-MODEL_ID = "/home/wlh/llmffn/models/Meta-Llama-3.1-8B"
+MODEL_ID = str(REPO_ROOT / "models" / "Meta-Llama-3.1-8B")
 ```
 
 也就是说，最省事的做法是把模型放到：
@@ -210,7 +210,8 @@ MODEL_ID = "/home/wlh/llmffn/models/Meta-Llama-3.1-8B"
 ### 1. 获取并编译 CUTracer
 
 ```bash
-cd ~
+mkdir -p third_party
+cd third_party
 git clone https://github.com/facebookresearch/CUTracer.git
 cd CUTracer
 sudo apt-get install libzstd-dev
@@ -221,7 +222,7 @@ make -j"$(nproc)"
 构建成功后，关键产物应该在：
 
 ```text
-~/CUTracer/lib/cutracer.so
+third_party/CUTracer/lib/cutracer.so
 ```
 
 ### 2. 安装 CUTracer Python CLI
@@ -229,7 +230,7 @@ make -j"$(nproc)"
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate llmffn
-cd ~/CUTracer/python
+cd third_party/CUTracer/python
 python3 -m pip install .
 ```
 
@@ -251,7 +252,7 @@ cutracer --help
 在当前已验证环境中，`cutracer` 的位置是：
 
 ```text
-/home/wlh/miniconda3/envs/llmffn/bin/cutracer
+<conda-env>/bin/cutracer
 ```
 
 ### 3. 在本仓库中使用 CUTracer
@@ -264,7 +265,7 @@ cutracer --help
 推荐：
 
 ```bash
-export CUTRACER_SO=~/CUTracer/lib/cutracer.so
+export CUTRACER_SO=third_party/CUTracer/lib/cutracer.so
 ```
 
 然后运行：
@@ -273,23 +274,23 @@ export CUTRACER_SO=~/CUTracer/lib/cutracer.so
 python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --layer 24 \
   --device-map auto \
-  --cutracer-so ~/CUTracer/lib/cutracer.so
+  --cutracer-so third_party/CUTracer/lib/cutracer.so
 ```
 
 ## 配置 Nsight Compute
 
 ### 1. 确认 `ncu` 可用
 
-当前机器上的 `ncu` 在：
+当前机器上的 `ncu` 可以通过下面的命令确认：
 
 ```text
-/usr/local/cuda-12.9/bin/ncu
+which ncu
 ```
 
-如果你的 PATH 里没有它，可以手动加：
+如果你的 PATH 里没有它，再按本机实际安装位置手动加入：
 
 ```bash
-export PATH=/usr/local/cuda-12.9/bin:$PATH
+export PATH=/path/to/cuda/bin:$PATH
 ```
 
 验证方式：
@@ -301,7 +302,7 @@ ncu --version
 
 ### 2. 处理 GPU Performance Counter 权限
 
-如果运行 `ncu` 或 [profile_replay_l2_hit_rate.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py:1) 时看到：
+如果运行 `ncu` 或 [profile_replay_l2_hit_rate.py](scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py) 时看到：
 
 ```text
 ERR_NVGPUCTRPERM
@@ -338,7 +339,7 @@ sudo reboot
 
 ### 3. 关于 `sudo`、锁文件和 TMPDIR
 
-本仓库里的 [profile_replay_l2_hit_rate.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py:1) 已经做了两层兼容：
+本仓库里的 [profile_replay_l2_hit_rate.py](scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py) 已经做了两层兼容：
 
 - 会自动解析 `ncu` 的绝对路径，不依赖 `sudo` 继承 PATH
 - 会为 `ncu` 分配私有 `TMPDIR`，避免 `/tmp/nsight-compute-lock` 冲突
@@ -346,9 +347,9 @@ sudo reboot
 所以如果系统权限仍然只允许 root profile，可以直接这样运行：
 
 ```bash
-sudo -E /home/wlh/miniconda3/envs/llmffn/bin/python3 \
-  /home/wlh/llmffn/scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
-  --run-dir /home/wlh/llmffn/scripts/cutracer_ffn_trace/output/runs/layer_24_20260422_111157 \
+sudo -E "$(command -v python3)" \
+  scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
+  --run-dir scripts/cutracer_ffn_trace/output/runs/<your_run_dir> \
   --device-map auto
 ```
 
@@ -400,14 +401,14 @@ python3 scripts/statistic/replay_single_ffn_mlp.py \
 通常是因为：
 
 - 没有激活 `llmffn`
-- 没有在 `~/CUTracer/python` 下执行 `pip install .`
+- 没有在 `third_party/CUTracer/python` 下执行 `pip install .`
 
 ### `Could not find cutracer.so`
 
 通常是因为：
 
 - 没有完成 `make`
-- `cutracer.so` 不在 `~/CUTracer/lib/cutracer.so`
+- `cutracer.so` 不在 `third_party/CUTracer/lib/cutracer.so`
 - 没传 `--cutracer-so`
 
 ### `ERR_NVGPUCTRPERM`
@@ -436,15 +437,15 @@ python3 scripts/statistic/replay_single_ffn_mlp.py \
 python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --layer 24 \
   --device-map auto \
-  --cutracer-so ~/CUTracer/lib/cutracer.so \
+  --cutracer-so third_party/CUTracer/lib/cutracer.so \
   --processed-preview-lines 50
 ```
 
 ### Nsight Compute L2 hit rate
 
 ```bash
-sudo -E /home/wlh/miniconda3/envs/llmffn/bin/python3 \
-  /home/wlh/llmffn/scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
-  --run-dir /home/wlh/llmffn/scripts/cutracer_ffn_trace/output/runs/layer_24_20260422_111157 \
+sudo -E "$(command -v python3)" \
+  scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
+  --run-dir scripts/cutracer_ffn_trace/output/runs/<your_run_dir> \
   --device-map auto
 ```

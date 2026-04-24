@@ -13,12 +13,7 @@ import torch
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-NVIDIA_NCU_PYTHON_DIR = Path("/usr/local/cuda-12.9/nsight-compute-2025.2.0/extras/python")
-
-if str(NVIDIA_NCU_PYTHON_DIR) not in sys.path:
-    sys.path.insert(0, str(NVIDIA_NCU_PYTHON_DIR))
-
-import ncu_report
+NCU_REPORT_MODULE = None
 
 DEFAULT_METRICS = (
     "lts__t_sector_op_read_hit_rate.pct",
@@ -129,12 +124,16 @@ def resolve_ncu_executable(explicit_value: str) -> str:
     if resolved_from_path:
         return str(Path(resolved_from_path).resolve())
 
-    fallback_paths = (
-        Path("/usr/local/cuda/bin/ncu"),
-        Path("/usr/local/cuda-12.9/bin/ncu"),
-        Path("/usr/local/cuda-12.8/bin/ncu"),
-        Path("/usr/local/cuda-12.7/bin/ncu"),
-    )
+    fallback_paths: list[Path] = []
+    for env_name in ("CUDA_HOME", "CUDA_PATH"):
+        env_value = os.environ.get(env_name)
+        if env_value:
+            fallback_paths.append(Path(env_value).expanduser() / "bin" / "ncu")
+
+    nvcc_path = shutil.which("nvcc")
+    if nvcc_path:
+        fallback_paths.append(Path(nvcc_path).resolve().parent / "ncu")
+
     for path in fallback_paths:
         if path.is_file():
             return str(path.resolve())
@@ -147,6 +146,39 @@ def resolve_ncu_executable(explicit_value: str) -> str:
         f"{searched}\n"
         "Pass --ncu /absolute/path/to/ncu if it is installed elsewhere."
     )
+
+
+def resolve_ncu_python_dir(ncu_executable: str) -> Path:
+    ncu_path = Path(ncu_executable).resolve()
+    candidates = [
+        ncu_path.parent.parent / "nsight-compute-2025.2.0" / "extras" / "python",
+        ncu_path.parent.parent / "nsight-compute" / "extras" / "python",
+    ]
+    candidates.extend(sorted((ncu_path.parent.parent).glob("nsight-compute-*/extras/python"), reverse=True))
+
+    for candidate in candidates:
+        if (candidate / "ncu_report.py").is_file():
+            return candidate
+
+    searched = "\n".join(f"- {candidate}" for candidate in candidates)
+    raise FileNotFoundError(
+        "Could not find the Nsight Compute Python report API (ncu_report.py).\n"
+        f"Resolved ncu executable: {ncu_executable}\n"
+        "Searched these locations:\n"
+        f"{searched}"
+    )
+
+
+def import_ncu_report(ncu_python_dir: Path):
+    global NCU_REPORT_MODULE
+    if NCU_REPORT_MODULE is not None:
+        return NCU_REPORT_MODULE
+    if str(ncu_python_dir) not in sys.path:
+        sys.path.insert(0, str(ncu_python_dir))
+    import ncu_report
+
+    NCU_REPORT_MODULE = ncu_report
+    return NCU_REPORT_MODULE
 
 
 def resolve_report_base(output_dir: Path, layer: int) -> Path:
@@ -287,7 +319,9 @@ def metric_value(action: Any, metric_name: str) -> float | None:
 
 
 def parse_ncu_report(report_path: Path) -> list[dict[str, Any]]:
-    context = ncu_report.load_report(report_path)
+    if NCU_REPORT_MODULE is None:
+        raise RuntimeError("ncu_report module was not initialized before parsing the Nsight Compute report.")
+    context = NCU_REPORT_MODULE.load_report(report_path)
     kernels: list[dict[str, Any]] = []
 
     for range_index in range(context.num_ranges()):
@@ -324,6 +358,7 @@ def save_text(path: Path, text: str) -> None:
 def main() -> None:
     args = parse_args()
     args.ncu = resolve_ncu_executable(args.ncu)
+    import_ncu_report(resolve_ncu_python_dir(args.ncu))
     capture_path, payload, output_dir = resolve_capture_and_output(args)
     layer = args.layer if args.layer is not None else int(payload["layer"])
     ncu_tmpdir = resolve_ncu_tmpdir(output_dir)

@@ -37,6 +37,13 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --cutracer-so /path/to/cutracer.so
 ```
 
+If you follow this repository's default layout, build CUTracer under
+`third_party/CUTracer/` and point `--cutracer-so` to:
+
+```text
+third_party/CUTracer/lib/cutracer.so
+```
+
 This creates a per-run directory under:
 
 ```text

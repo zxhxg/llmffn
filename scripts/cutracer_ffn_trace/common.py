@@ -6,8 +6,11 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
 STATISTIC_DIR = SCRIPT_DIR.parent / "statistic"
 RUN_FP16_PATH = STATISTIC_DIR / "run_fp16.py"
+THIRD_PARTY_DIR = REPO_ROOT / "third_party"
+DEFAULT_CUTRACER_ROOT = THIRD_PARTY_DIR / "CUTracer"
 
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output"
 DEFAULT_CAPTURE_DIR = DEFAULT_OUTPUT_DIR / "captures"

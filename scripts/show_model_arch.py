@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from transformers import AutoModelForCausalLM
 
 
-model_id = "/home/wlh/llmffn/models/Meta-Llama-3.1-8B"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+model_id = str(REPO_ROOT / "models" / "Meta-Llama-3.1-8B")
 
 model = AutoModelForCausalLM.from_pretrained(
     model_id,

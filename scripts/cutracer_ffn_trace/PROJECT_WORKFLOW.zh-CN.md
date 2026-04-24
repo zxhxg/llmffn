@@ -48,7 +48,7 @@
 
 入口脚本：
 
-- [capture_first_generated_ffn_input.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py)
+- [capture_first_generated_ffn_input.py](capture_first_generated_ffn_input.py)
 
 输入参数：
 
@@ -105,7 +105,7 @@ Capture 阶段做的事：
 
 入口脚本：
 
-- [replay_single_ffn_mlp.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/replay_single_ffn_mlp.py)
+- [replay_single_ffn_mlp.py](../statistic/replay_single_ffn_mlp.py)
 
 输入参数：
 
@@ -170,7 +170,7 @@ Replay 阶段做的事：
 
 入口脚本：
 
-- [postprocess_cutracer_ffn_trace.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/postprocess_cutracer_ffn_trace.py)
+- [postprocess_cutracer_ffn_trace.py](postprocess_cutracer_ffn_trace.py)
 
 输入参数：
 
@@ -249,26 +249,26 @@ Replay 阶段做的事：
 
 ## 6. 目录中的关键文件及职责
 
-- [common.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/common.py)
+- [common.py](common.py)
   公共路径、模型加载和 layer/MLP 定位逻辑
-- [run_full_cutracer_ffn_trace.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py)
+- [run_full_cutracer_ffn_trace.py](run_full_cutracer_ffn_trace.py)
   一键执行完整工作流，并为每次运行生成独立输出目录、`processed_preview.jsonl` 和摘要文件
-- [capture_first_generated_ffn_input.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py)
+- [capture_first_generated_ffn_input.py](capture_first_generated_ffn_input.py)
   负责抓取 FFN 输入
-- [replay_single_ffn_mlp.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/replay_single_ffn_mlp.py)
+- [replay_single_ffn_mlp.py](../statistic/replay_single_ffn_mlp.py)
   负责只重放目标 layer 的 `mlp`
-- [postprocess_cutracer_ffn_trace.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/postprocess_cutracer_ffn_trace.py)
+- [postprocess_cutracer_ffn_trace.py](postprocess_cutracer_ffn_trace.py)
   负责把 raw trace 转成最终序列
-- [README.md](/home/wlh/llmffn/scripts/cutracer_ffn_trace/README.md)
+- [README.md](README.md)
   英文版快速使用说明
-- [README.zh-CN.md](/home/wlh/llmffn/scripts/cutracer_ffn_trace/README.zh-CN.md)
+- [README.zh-CN.md](README.zh-CN.md)
   中文版快速使用说明
 
 ## 6.1 一键脚本的输入与输出
 
 一键入口脚本：
 
-- [run_full_cutracer_ffn_trace.py](/home/wlh/llmffn/scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py)
+- [run_full_cutracer_ffn_trace.py](run_full_cutracer_ffn_trace.py)
 
 常用输入参数：
 

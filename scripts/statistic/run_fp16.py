@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-MODEL_ID = "/home/wlh/llmffn/models/Meta-Llama-3.1-8B"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MODEL_ID = str(REPO_ROOT / "models" / "Meta-Llama-3.1-8B")
 _MODEL = None
 _TOKENIZER = None
 

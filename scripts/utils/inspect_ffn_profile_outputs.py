@@ -5,7 +5,8 @@ from pathlib import Path
 import torch
 
 
-DEFAULT_OUTPUT_DIR = Path("/home/wlh/llmffn/scripts/statistic/ffn_single_layer_profile_output")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "scripts" / "statistic" / "ffn_single_layer_profile_output"
 DEFAULT_TOP_K = 10
 
 

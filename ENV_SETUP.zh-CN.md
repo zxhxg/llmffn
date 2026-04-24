@@ -61,7 +61,6 @@
 
 | 包 | 版本 | 用途 |
 |---|---:|---|
-| `cutracer` | `0.2.1.dev19` | CUTracer Python CLI |
 | `importlib_resources` | `7.1.0` | `cutracer` CLI 依赖 |
 | `triton` | `3.1.0` | Triton 相关运行时 |
 | `tritonparse` | `0.4.3` | Triton 相关解析辅助 |
@@ -160,6 +159,7 @@ python3 -m pip install \
 - `environment.llmffn.yml` 和 `requirements.llmffn.txt` 都是基于当前机器上已经验证通过的环境整理出来的。
 - 这两份文件只覆盖 Python 侧依赖，不会自动安装系统级工具，例如 `ncu`、NVIDIA 驱动、CUDA toolkit，也不会替你编译 `cutracer.so`。
 - 如果你的环境访问不到 `download.pytorch.org`，优先使用当前仓库附带的这两份清单；它们已经避免依赖 PyTorch CUDA 专用 wheel 索引。
+- `cutracer` 不再放进通用依赖清单里统一安装，因为它通常应当和你本地编译出的 `cutracer.so` 配套；推荐始终在 `~/CUTracer/python` 目录里执行 `pip install .` 或 `pip install -e .`。
 
 ## 配置模型
 
@@ -208,6 +208,14 @@ conda activate llmffn
 cd ~/CUTracer/python
 python3 -m pip install .
 ```
+
+如果你已经先执行了：
+
+```bash
+python3 -m pip install -r requirements.llmffn.txt
+```
+
+那么 `cutracer` 这一步仍然需要单独执行，不能省略。
 
 安装后可以验证：
 

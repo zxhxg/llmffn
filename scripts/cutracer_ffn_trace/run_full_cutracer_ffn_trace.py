@@ -368,6 +368,8 @@ def main() -> None:
     ]
     if args.trace_size_limit_mb > 0:
         trace_cmd.extend(["--trace-size-limit-mb", str(args.trace_size_limit_mb)])
+    if args.no_dump_cubin:
+        trace_cmd.append("--no-dump-cubin")
     trace_cmd.extend(
         [
             "--output-dir",

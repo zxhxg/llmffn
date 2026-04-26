@@ -91,6 +91,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--no-dump-cubin",
+        action="store_true",
+        help=(
+            "Set CUTRACER_DUMP_CUBIN=0 for the trace step. "
+            "This avoids huge kernel_*.cubin files on H100/sm90 runs."
+        ),
+    )
+    parser.add_argument(
         "--processed-preview-lines",
         type=int,
         default=10000,
@@ -152,12 +160,18 @@ def print_block(title: str, content: str) -> None:
         print("(no output)")
 
 
-def run_command(cmd: list[str], cwd: Path, step_name: str) -> subprocess.CompletedProcess[str]:
+def run_command(
+    cmd: list[str],
+    cwd: Path,
+    step_name: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         cmd,
         cwd=str(cwd),
         text=True,
         capture_output=True,
+        env=env,
     )
     print_block(f"{step_name} command", shlex.join(cmd))
     if result.stdout:
@@ -367,7 +381,13 @@ def main() -> None:
             args.device_map,
         ]
     )
-    trace_result = run_command(trace_cmd, repo_root(), "trace")
+    trace_env = os.environ.copy()
+    trace_environment_overrides: dict[str, str] = {}
+    if args.no_dump_cubin:
+        trace_environment_overrides["CUTRACER_DUMP_CUBIN"] = "0"
+    trace_env.update(trace_environment_overrides)
+
+    trace_result = run_command(trace_cmd, repo_root(), "trace", env=trace_env)
     if not cutracer_trace_succeeded(trace_result, paths["raw_trace_dir"]):
         raise RuntimeError(
             "cutracer trace did not produce the expected raw trace artifacts. "
@@ -409,6 +429,7 @@ def main() -> None:
             "trace": shlex.join(trace_cmd),
             "postprocess": shlex.join(postprocess_cmd),
         },
+        "trace_environment_overrides": trace_environment_overrides,
         "return_codes": {
             "capture": capture_result.returncode,
             "trace": trace_result.returncode,

@@ -225,6 +225,58 @@ make -j"$(nproc)"
 third_party/CUTracer/lib/cutracer.so
 ```
 
+### 1.1 服务器无 sudo 权限时的替代方式
+
+如果服务器上没有 sudo 密码，`sudo apt-get install libzstd-dev` 不能执行，可以用 Conda 环境里的 zstd：
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate llmffn
+conda install -c conda-forge zstd -y
+
+export CPATH="$CONDA_PREFIX/include${CPATH:+:$CPATH}"
+export LIBRARY_PATH="$CONDA_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PKG_CONFIG_PATH="$CONDA_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+```
+
+确认头文件和库存在：
+
+```bash
+ls "$CONDA_PREFIX/include/zstd.h"
+ls "$CONDA_PREFIX/lib"/libzstd*
+```
+
+如果 `./install_third_party.sh` 报 `Permission denied`，直接用 bash 执行即可：
+
+```bash
+bash ./install_third_party.sh
+```
+
+如果 `make` 报 `nvcc: not found`、`ptxas: not found` 或 `nvdisasm not found`，先加载服务器 CUDA module：
+
+```bash
+module avail cuda
+module load CUDA/12.4
+which nvcc
+which ptxas
+which nvdisasm
+```
+
+注意有些服务器模块名是大写 `CUDA/12.4`。如果加载 `CUDA/12.1` 后 PyTorch 报：
+
+```text
+undefined symbol: __nvJitLinkComplete_12_4
+```
+
+通常是 CUDA 动态库版本冲突，优先切到 `CUDA/12.4`：
+
+```bash
+module unload CUDA/12.1
+module load CUDA/12.4
+python3 -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
 ### 2. 安装 CUTracer Python CLI
 
 ```bash
@@ -276,6 +328,27 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --device-map auto \
   --cutracer-so third_party/CUTracer/lib/cutracer.so
 ```
+
+在当前 `fuwuqi` 服务器分支上，H100/sm90 节点建议使用下面的入口，避免大量 `kernel_*.cubin` 文件占满磁盘，并在后处理成功后清理 raw trace：
+
+```bash
+python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
+  --layer 24 \
+  --device-map auto \
+  --cutracer-so "$CUTRACER_SO" \
+  --no-data-timeout-s 120 \
+  --no-dump-cubin \
+  --processed-preview-lines 50 \
+  --delete-raw-trace-after-postprocess
+```
+
+如果只是调试流程、防止爆盘，可以额外加：
+
+```bash
+--trace-size-limit-mb 8192
+```
+
+但这个参数一旦触发，最终访存序列就是不完整的前缀样本；完整采集时不要使用它，或者设置足够大的上限。
 
 ## 配置 Nsight Compute
 
@@ -437,8 +510,11 @@ python3 scripts/statistic/replay_single_ffn_mlp.py \
 python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --layer 24 \
   --device-map auto \
-  --cutracer-so third_party/CUTracer/lib/cutracer.so \
-  --processed-preview-lines 50
+  --cutracer-so "$CUTRACER_SO" \
+  --no-data-timeout-s 120 \
+  --no-dump-cubin \
+  --processed-preview-lines 50 \
+  --delete-raw-trace-after-postprocess
 ```
 
 ### Nsight Compute L2 hit rate

@@ -279,6 +279,30 @@ Replay 阶段做的事：
 - `--cutracer-so`
 - `--run-name`
 - `--output-root`
+- `--no-data-timeout-s`
+- `--no-dump-cubin`
+- `--trace-size-limit-mb`
+- `--processed-preview-lines`
+- `--delete-raw-trace-after-postprocess`
+
+当前 `fuwuqi` 服务器分支在 H100/sm90 上推荐：
+
+```bash
+python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
+  --layer 24 \
+  --device-map auto \
+  --cutracer-so "$CUTRACER_SO" \
+  --no-data-timeout-s 120 \
+  --no-dump-cubin \
+  --processed-preview-lines 50 \
+  --delete-raw-trace-after-postprocess
+```
+
+其中：
+
+- `--no-dump-cubin` 会向 `cutracer trace` 传 `--no-dump-cubin`，用于关闭 H100 上非常大的 `kernel_*.cubin` dump。
+- `--trace-size-limit-mb` 是防爆盘保险；触发后访存序列不完整，只适合调试。
+- `--delete-raw-trace-after-postprocess` 只在 postprocess 成功后删除 `raw_trace/`，失败时保留中间文件方便排查。
 
 一键脚本的输出目录结构：
 
@@ -290,6 +314,79 @@ Replay 阶段做的事：
   后处理后的最终访存序列
 - `run_summary.json`
   本次运行的摘要，包括命令行、退出码、产物路径和文件大小
+
+## 6.2 单工具命令索引
+
+### Capture
+
+```bash
+python3 scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py \
+  --layer 24 \
+  --device-map auto \
+  --prompt "Explain briefly what the FFN layer does in a transformer." \
+  --output scripts/cutracer_ffn_trace/output/captures/layer24_capture.pt
+```
+
+### Replay
+
+`replay_single_ffn_mlp.py` 位于 `scripts/statistic/`，但属于本流程的 replay 入口：
+
+```bash
+python3 scripts/statistic/replay_single_ffn_mlp.py \
+  --capture scripts/cutracer_ffn_trace/output/captures/layer24_capture.pt \
+  --device-map auto
+```
+
+### 手动 CUTracer trace
+
+```bash
+cutracer trace \
+  --cutracer-so "$CUTRACER_SO" \
+  -i mem_addr_trace \
+  --trace-format ndjson \
+  --kernel-events full \
+  --cpu-callstack auto \
+  --no-data-timeout-s 120 \
+  --no-dump-cubin \
+  --output-dir scripts/cutracer_ffn_trace/output/raw_trace/layer24_manual \
+  -- python3 scripts/statistic/replay_single_ffn_mlp.py \
+    --capture scripts/cutracer_ffn_trace/output/captures/layer24_capture.pt \
+    --device-map auto
+```
+
+### Postprocess
+
+```bash
+python3 scripts/cutracer_ffn_trace/postprocess_cutracer_ffn_trace.py \
+  scripts/cutracer_ffn_trace/output/runs/<run_dir>/raw_trace \
+  --output scripts/cutracer_ffn_trace/output/runs/<run_dir>/processed_ffn_mem_sequence.jsonl
+```
+
+当前分支的 postprocess 会跳过非 UTF-8 或损坏 JSON 行，并继续处理有效记录。
+
+### Extract addresses
+
+```bash
+python3 scripts/cutracer_ffn_trace/extract_addrs_to_jsonl.py \
+  scripts/cutracer_ffn_trace/output/runs/<run_dir>/processed_ffn_mem_sequence.jsonl \
+  --output scripts/cutracer_ffn_trace/output/runs/<run_dir>/addrs.jsonl \
+  --max-bytes 1073741824
+```
+
+### Nsight Compute L2 hit rate
+
+```bash
+python3 scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
+  --run-dir scripts/cutracer_ffn_trace/output/runs/<run_dir> \
+  --device-map auto \
+  --dry-run
+```
+
+```bash
+python3 scripts/cutracer_ffn_trace/profile_replay_l2_hit_rate.py \
+  --run-dir scripts/cutracer_ffn_trace/output/runs/<run_dir> \
+  --device-map auto
+```
 
 ## 7. 目前这套实现的特点
 

@@ -1,6 +1,7 @@
 import argparse
 import heapq
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,41 @@ from common import default_processed_path, ensure_parent_dir
 MEM_RECORD_TYPES = {"mem_trace", "mem_addr_trace"}
 KERNEL_EVENT_TYPES = {"kernel_metadata", "kernel_launch"}
 DEFAULT_CALLSTACK_MARKERS = ("replay_target_mlp_once", "replay_single_ffn_mlp.py")
+
+
+def iter_json_records(path: Path):
+    skipped_decode = 0
+    skipped_json = 0
+
+    with path.open("rb") as handle:
+        for line_no, raw_line in enumerate(handle, start=1):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+
+            try:
+                line = raw_line.decode("utf-8")
+            except UnicodeDecodeError:
+                skipped_decode += 1
+                line = raw_line.decode("utf-8", errors="replace")
+
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                skipped_json += 1
+                continue
+
+            if isinstance(record, dict):
+                yield line_no, record
+
+    if skipped_decode or skipped_json:
+        print(
+            (
+                f"[warn] skipped malformed trace records in {path}: "
+                f"decode_errors={skipped_decode}, json_errors={skipped_json}"
+            ),
+            file=sys.stderr,
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,29 +149,24 @@ def collect_matching_metadata(
     metadata_seen = 0
 
     for path in paths:
-        with path.open("r", encoding="utf-8") as handle:
-            for line_no, line in enumerate(handle, start=1):
-                line = line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                if record_type(record) not in KERNEL_EVENT_TYPES:
-                    continue
-                metadata_seen += 1
-                kid = launch_id(record)
-                if kid is None:
-                    continue
-                entry = {
-                    "kernel_launch_id": kid,
-                    "mangled_name": record.get("mangled_name"),
-                    "unmangled_name": launch_name(record),
-                    "cpu_callstack": record.get("cpu_callstack"),
-                    "source_trace": str(path),
-                    "source_line": line_no,
-                }
-                fallback[kid] = entry
-                if metadata_matches(record, markers):
-                    matched[kid] = entry
+        for line_no, record in iter_json_records(path):
+            if record_type(record) not in KERNEL_EVENT_TYPES:
+                continue
+            metadata_seen += 1
+            kid = launch_id(record)
+            if kid is None:
+                continue
+            entry = {
+                "kernel_launch_id": kid,
+                "mangled_name": record.get("mangled_name"),
+                "unmangled_name": launch_name(record),
+                "cpu_callstack": record.get("cpu_callstack"),
+                "source_trace": str(path),
+                "source_line": line_no,
+            }
+            fallback[kid] = entry
+            if metadata_matches(record, markers):
+                matched[kid] = entry
 
     if matched:
         return matched
@@ -157,32 +188,33 @@ def iter_matching_mem_events_for_path(
     path: Path, metadata_by_launch_id: dict[int, dict[str, Any]]
 ):
     target_ids = set(metadata_by_launch_id)
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            record = json.loads(line)
-            if record_type(record) not in MEM_RECORD_TYPES:
-                continue
-            kid = launch_id(record)
-            if kid not in target_ids:
-                continue
+    for _line_no, record in iter_json_records(path):
+        if record_type(record) not in MEM_RECORD_TYPES:
+            continue
+        kid = launch_id(record)
+        if kid not in target_ids:
+            continue
 
-            meta = metadata_by_launch_id[kid]
-            yield {
-                "kernel_launch_id": kid,
-                "trace_index": int(record["trace_index"]),
-                "timestamp": int(record["timestamp"]),
-                "mangled_name": meta.get("mangled_name"),
-                "unmangled_name": meta.get("unmangled_name"),
-                "cta": record.get("cta"),
-                "warp": record.get("warp"),
-                "pc": record.get("pc"),
-                "sass": record.get("sass"),
-                "addrs": record.get("addrs"),
-                "source_trace": str(path),
-            }
+        try:
+            trace_index = int(record["trace_index"])
+            timestamp = int(record["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        meta = metadata_by_launch_id[kid]
+        yield {
+            "kernel_launch_id": kid,
+            "trace_index": trace_index,
+            "timestamp": timestamp,
+            "mangled_name": meta.get("mangled_name"),
+            "unmangled_name": meta.get("unmangled_name"),
+            "cta": record.get("cta"),
+            "warp": record.get("warp"),
+            "pc": record.get("pc"),
+            "sass": record.get("sass"),
+            "addrs": record.get("addrs"),
+            "source_trace": str(path),
+        }
 
 
 def merge_mem_event_streams(

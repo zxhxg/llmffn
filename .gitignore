@@ -37,3 +37,6 @@ scripts/analyse/*output*/
 local.txt
 local.jsonl
 local.part*.jsonl
+
+
+layer_*/

@@ -82,12 +82,29 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--trace-size-limit-mb",
+        type=int,
+        default=0,
+        help=(
+            "Forwarded to cutracer trace as --trace-size-limit-mb when positive. "
+            "Use this to cap very large mem_addr_trace outputs. Default 0 leaves CUTracer unlimited."
+        ),
+    )
+    parser.add_argument(
         "--processed-preview-lines",
         type=int,
         default=10000,
         help=(
             "Maximum number of lines copied from processed_ffn_mem_sequence.jsonl "
             "into processed_preview.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--delete-raw-trace-after-postprocess",
+        action="store_true",
+        help=(
+            "Delete the raw_trace directory after postprocess succeeds. "
+            "The run summary keeps the raw trace size/count statistics collected before deletion."
         ),
     )
     return parser.parse_args()
@@ -334,16 +351,22 @@ def main() -> None:
         "auto",
         "--no-data-timeout-s",
         str(args.no_data_timeout_s),
-        "--output-dir",
-        str(paths["raw_trace_dir"]),
-        "--",
-        args.python,
-        str(replay_script),
-        "--capture",
-        str(paths["capture"]),
-        "--device-map",
-        args.device_map,
     ]
+    if args.trace_size_limit_mb > 0:
+        trace_cmd.extend(["--trace-size-limit-mb", str(args.trace_size_limit_mb)])
+    trace_cmd.extend(
+        [
+            "--output-dir",
+            str(paths["raw_trace_dir"]),
+            "--",
+            args.python,
+            str(replay_script),
+            "--capture",
+            str(paths["capture"]),
+            "--device-map",
+            args.device_map,
+        ]
+    )
     trace_result = run_command(trace_cmd, repo_root(), "trace")
     if not cutracer_trace_succeeded(trace_result, paths["raw_trace_dir"]):
         raise RuntimeError(
@@ -368,6 +391,11 @@ def main() -> None:
         paths["processed_preview"],
         args.processed_preview_lines,
     )
+    raw_trace_summary = summarize_raw_trace_dir(paths["raw_trace_dir"])
+    raw_trace_deleted = False
+    if args.delete_raw_trace_after_postprocess:
+        shutil.rmtree(paths["raw_trace_dir"])
+        raw_trace_deleted = True
 
     summary = {
         "model_id": args.model_id,
@@ -391,7 +419,8 @@ def main() -> None:
             "processed_size_bytes": file_size_or_none(paths["processed"]),
             "processed_preview_size_bytes": file_size_or_none(paths["processed_preview"]),
             "processed_preview_summary": processed_preview_summary,
-            "raw_trace_summary": summarize_raw_trace_dir(paths["raw_trace_dir"]),
+            "raw_trace_summary": raw_trace_summary,
+            "raw_trace_deleted_after_postprocess": raw_trace_deleted,
             "processed_event_count": parse_memory_events_written(postprocess_result.stdout),
         },
     }

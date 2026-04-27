@@ -20,6 +20,7 @@ models/
 
 # Generated trace / profiling outputs
 scripts/cutracer_ffn_trace/output/
+scripts/example/output/
 scripts/statistic/*output*/
 scripts/analyse/*output*/
 

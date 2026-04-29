@@ -10,7 +10,12 @@ from common import default_processed_path, ensure_parent_dir
 
 MEM_RECORD_TYPES = {"mem_trace", "mem_addr_trace"}
 KERNEL_EVENT_TYPES = {"kernel_metadata", "kernel_launch"}
-DEFAULT_CALLSTACK_MARKERS = ("replay_target_mlp_once", "replay_single_ffn_mlp.py")
+DEFAULT_CALLSTACK_MARKERS = (
+    "replay_target_mlp_once",
+    "replay_single_ffn_mlp.py",
+    "replay_weight_scan_once",
+    "replay_single_ffn_weight_scan.py",
+)
 
 
 def iter_json_records(path: Path):

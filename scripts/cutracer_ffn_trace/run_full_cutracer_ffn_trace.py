@@ -53,6 +53,22 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--replay-mode",
+        choices=["mlp", "weight-scan"],
+        default="mlp",
+        help=(
+            "Replay implementation wrapped by CUTracer. 'mlp' runs the real target_mlp call; "
+            "'weight-scan' runs explicit LDG scans over gate/up/down weights to record "
+            "complete weight global-memory addresses."
+        ),
+    )
+    parser.add_argument(
+        "--weight-scan-blocks",
+        type=int,
+        default=4096,
+        help="CUDA blocks per projection when --replay-mode weight-scan is used.",
+    )
+    parser.add_argument(
         "--cutracer-so",
         type=Path,
         default=None,
@@ -346,7 +362,12 @@ def main() -> None:
     paths["raw_trace_dir"].mkdir(parents=True, exist_ok=True)
 
     capture_script = resolve_helper_script("capture_first_generated_ffn_input.py")
-    replay_script = resolve_helper_script("replay_single_ffn_mlp.py")
+    replay_script_name = (
+        "replay_single_ffn_weight_scan.py"
+        if args.replay_mode == "weight-scan"
+        else "replay_single_ffn_mlp.py"
+    )
+    replay_script = resolve_helper_script(replay_script_name)
     postprocess_script = resolve_helper_script("postprocess_cutracer_ffn_trace.py")
 
     capture_cmd = [
@@ -368,6 +389,19 @@ def main() -> None:
     capture_env = build_child_env()
     capture_result = run_command(capture_cmd, repo_root(), "capture", env=capture_env)
     ensure_success(capture_result, "capture")
+
+    compile_cmd: list[str] | None = None
+    compile_result: subprocess.CompletedProcess[str] | None = None
+    if args.replay_mode == "weight-scan":
+        compile_cmd = [
+            args.python,
+            str(replay_script),
+            "--compile-only",
+            "--preferred-blas",
+            args.preferred_blas,
+        ]
+        compile_result = run_command(compile_cmd, repo_root(), "weight-scan compile", env=build_child_env())
+        ensure_success(compile_result, "weight-scan compile")
 
     trace_cmd = [
         cutracer_bin,
@@ -404,6 +438,8 @@ def main() -> None:
             args.preferred_blas,
         ]
     )
+    if args.replay_mode == "weight-scan":
+        trace_cmd.extend(["--blocks", str(args.weight_scan_blocks)])
     trace_env = build_child_env()
     trace_environment_overrides: dict[str, str] = {}
     if os.environ.get("TORCH_BLAS_PREFER_CUBLASLT") is not None:
@@ -452,16 +488,20 @@ def main() -> None:
         "prompt": args.prompt,
         "device_map": args.device_map,
         "preferred_blas": args.preferred_blas,
+        "replay_mode": args.replay_mode,
+        "weight_scan_blocks": args.weight_scan_blocks if args.replay_mode == "weight-scan" else None,
         "cutracer_so": str(cutracer_so),
         "paths": {key: str(value) for key, value in paths.items()},
         "commands": {
             "capture": shlex.join(capture_cmd),
+            "weight_scan_compile": shlex.join(compile_cmd) if compile_cmd is not None else None,
             "trace": shlex.join(trace_cmd),
             "postprocess": shlex.join(postprocess_cmd),
         },
         "trace_environment_overrides": trace_environment_overrides,
         "return_codes": {
             "capture": capture_result.returncode,
+            "weight_scan_compile": compile_result.returncode if compile_result is not None else None,
             "trace": trace_result.returncode,
             "postprocess": postprocess_result.returncode,
         },

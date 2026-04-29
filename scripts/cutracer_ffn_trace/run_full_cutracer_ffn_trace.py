@@ -43,6 +43,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--preferred-blas",
+        choices=["default", "cublas", "cublaslt"],
+        default="cublas",
+        help=(
+            "Preferred CUDA BLAS backend passed to capture/replay via "
+            "torch.backends.cuda.preferred_blas_library. Default cublas tries "
+            "to avoid cuBLASLt where PyTorch supports that override."
+        ),
+    )
+    parser.add_argument(
         "--cutracer-so",
         type=Path,
         default=None,
@@ -179,6 +189,12 @@ def run_command(
     if result.stderr:
         print_block(f"{step_name} stderr", result.stderr)
     return result
+
+
+def build_child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("TORCH_BLAS_PREFER_CUBLASLT", None)
+    return env
 
 
 def ensure_success(result: subprocess.CompletedProcess[str], step_name: str) -> None:
@@ -346,8 +362,11 @@ def main() -> None:
         args.device_map,
         "--output",
         str(paths["capture"]),
+        "--preferred-blas",
+        args.preferred_blas,
     ]
-    capture_result = run_command(capture_cmd, repo_root(), "capture")
+    capture_env = build_child_env()
+    capture_result = run_command(capture_cmd, repo_root(), "capture", env=capture_env)
     ensure_success(capture_result, "capture")
 
     trace_cmd = [
@@ -381,13 +400,21 @@ def main() -> None:
             str(paths["capture"]),
             "--device-map",
             args.device_map,
+            "--preferred-blas",
+            args.preferred_blas,
         ]
     )
-    trace_env = os.environ.copy()
+    trace_env = build_child_env()
     trace_environment_overrides: dict[str, str] = {}
+    if os.environ.get("TORCH_BLAS_PREFER_CUBLASLT") is not None:
+        trace_environment_overrides["TORCH_BLAS_PREFER_CUBLASLT"] = "<unset>"
     if args.no_dump_cubin:
         trace_environment_overrides["CUTRACER_DUMP_CUBIN"] = "0"
-    trace_env.update(trace_environment_overrides)
+    for key, value in trace_environment_overrides.items():
+        if value == "<unset>":
+            trace_env.pop(key, None)
+        else:
+            trace_env[key] = value
 
     trace_result = run_command(trace_cmd, repo_root(), "trace", env=trace_env)
     if not cutracer_trace_succeeded(trace_result, paths["raw_trace_dir"]):
@@ -424,6 +451,7 @@ def main() -> None:
         "layer": args.layer,
         "prompt": args.prompt,
         "device_map": args.device_map,
+        "preferred_blas": args.preferred_blas,
         "cutracer_so": str(cutracer_so),
         "paths": {key: str(value) for key, value in paths.items()},
         "commands": {

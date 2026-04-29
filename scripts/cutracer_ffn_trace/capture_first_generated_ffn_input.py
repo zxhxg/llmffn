@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 
 from common import (
+    configure_preferred_blas_library,
     default_capture_path,
     ensure_parent_dir,
     get_runtime_device,
@@ -39,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Capture output path (.pt). Defaults to scripts/cutracer_ffn_trace/output/captures/...",
     )
+    parser.add_argument(
+        "--preferred-blas",
+        choices=["default", "cublas", "cublaslt"],
+        default="cublas",
+        help="Preferred CUDA BLAS backend requested through torch.backends.cuda.preferred_blas_library.",
+    )
     return parser.parse_args()
 
 
@@ -51,6 +58,7 @@ def resolve_output_path(args: argparse.Namespace) -> Path:
 
 
 def capture_first_generated_ffn_input(args: argparse.Namespace) -> Path:
+    configure_preferred_blas_library(args.preferred_blas)
     model, tokenizer = load_model_and_tokenizer(args.model_id, args.device_map)
     target_mlp = get_target_mlp(model, args.layer)
 

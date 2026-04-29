@@ -51,6 +51,27 @@ def ensure_parent_dir(path: Path) -> Path:
     return path
 
 
+def configure_preferred_blas_library(preferred: str | None = "cublas") -> str | None:
+    if preferred in (None, "", "default"):
+        return None
+
+    import torch
+
+    setter = getattr(torch.backends.cuda, "preferred_blas_library", None)
+    if setter is None:
+        print(
+            "preferred_blas_library: unavailable in this PyTorch build; "
+            f"requested={preferred}"
+        )
+        return None
+
+    before = setter()
+    setter(preferred)
+    after = setter()
+    print(f"preferred_blas_library: before={before} requested={preferred} after={after}")
+    return str(after)
+
+
 def default_capture_path(layer: int) -> Path:
     return DEFAULT_CAPTURE_DIR / f"layer_{layer}_first_generated_token_capture.pt"
 

@@ -10,6 +10,7 @@ if str(CUTRACER_FFN_TRACE_DIR) not in sys.path:
     sys.path.insert(0, str(CUTRACER_FFN_TRACE_DIR))
 
 from common import (
+    configure_preferred_blas_library,
     ensure_cuda_module,
     get_target_mlp,
     load_model_and_tokenizer,
@@ -43,6 +44,12 @@ def parse_args() -> argparse.Namespace:
         default="cuda",
         help="Model placement strategy. Default forces the whole model onto cuda:0.",
     )
+    parser.add_argument(
+        "--preferred-blas",
+        choices=["default", "cublas", "cublaslt"],
+        default="cublas",
+        help="Preferred CUDA BLAS backend requested through torch.backends.cuda.preferred_blas_library.",
+    )
     return parser.parse_args()
 
 
@@ -51,6 +58,7 @@ def replay_target_mlp_once(target_mlp, input_tensor: torch.Tensor) -> torch.Tens
 
 
 def replay_single_ffn_mlp(args: argparse.Namespace) -> torch.Tensor:
+    configure_preferred_blas_library(args.preferred_blas)
     payload = torch.load(args.capture, map_location="cpu", weights_only=True)
     model_id = args.model_id or payload.get("model_id") or resolve_default_model_id()
     layer = args.layer if args.layer is not None else int(payload["layer"])

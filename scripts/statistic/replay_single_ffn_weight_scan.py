@@ -1,10 +1,13 @@
 import argparse
+import ctypes
+import hashlib
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 import torch
-from torch.utils.cpp_extension import load_inline
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CUTRACER_FFN_TRACE_DIR = SCRIPT_DIR.parent / "cutracer_ffn_trace"
@@ -21,10 +24,8 @@ from common import (  # noqa: E402
 
 
 CUDA_SOURCE = r"""
-#include <ATen/cuda/CUDAContext.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <torch/extension.h>
 
 __global__ __launch_bounds__(256) void scan_fp16_weight_kernel(
     const unsigned short* __restrict__ data,
@@ -45,30 +46,17 @@ __global__ __launch_bounds__(256) void scan_fp16_weight_kernel(
   }
 }
 
-torch::Tensor scan_one_weight(torch::Tensor weight, int blocks) {
-  TORCH_CHECK(weight.is_cuda(), "weight must be a CUDA tensor");
-  TORCH_CHECK(weight.scalar_type() == at::kHalf, "weight must be float16");
-  TORCH_CHECK(weight.is_contiguous(), "weight must be contiguous");
-  TORCH_CHECK(blocks > 0, "blocks must be positive");
-
-  auto checksum = torch::zeros({1}, torch::TensorOptions().device(weight.device()).dtype(torch::kUInt64));
-  const auto n = (long long)weight.numel();
-  const auto* data = reinterpret_cast<const unsigned short*>(weight.data_ptr<at::Half>());
-  auto* out = reinterpret_cast<unsigned long long*>(checksum.data_ptr<unsigned long long>());
-
-  scan_fp16_weight_kernel<<<blocks, 256, 0, at::cuda::getCurrentCUDAStream()>>>(data, n, out);
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-  return checksum;
-}
-"""
-
-CPP_SOURCE = r"""
-#include <torch/extension.h>
-
-torch::Tensor scan_one_weight(torch::Tensor weight, int blocks);
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("scan_one_weight", &scan_one_weight, "Scan one contiguous fp16 CUDA weight tensor with ld.global.u16");
+extern "C" int scan_one_weight_launch(
+    const void* data,
+    long long n,
+    void* checksum,
+    int blocks,
+    void* stream) {
+  scan_fp16_weight_kernel<<<blocks, 256, 0, reinterpret_cast<cudaStream_t>(stream)>>>(
+      reinterpret_cast<const unsigned short*>(data),
+      n,
+      reinterpret_cast<unsigned long long*>(checksum));
+  return static_cast<int>(cudaGetLastError());
 }
 """
 
@@ -116,20 +104,104 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_scan_extension(name: str):
-    extra_cuda_cflags = ["-O2"]
+class NvccScanExtension:
+    def __init__(self, so_path: Path):
+        self._lib = ctypes.CDLL(str(so_path))
+        self._launch = self._lib.scan_one_weight_launch
+        self._launch.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_longlong,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        ]
+        self._launch.restype = ctypes.c_int
+
+    def scan_one_weight(self, weight: torch.Tensor, blocks: int) -> torch.Tensor:
+        if not weight.is_cuda:
+            raise RuntimeError("weight must be a CUDA tensor")
+        if weight.dtype != torch.float16:
+            raise RuntimeError(f"weight must be float16, got {weight.dtype}")
+        if not weight.is_contiguous():
+            raise RuntimeError("weight must be contiguous")
+        if blocks <= 0:
+            raise RuntimeError("blocks must be positive")
+
+        checksum = torch.zeros((1,), device=weight.device, dtype=torch.uint64)
+        stream = torch.cuda.current_stream(weight.device)
+        err = self._launch(
+            ctypes.c_void_p(weight.data_ptr()),
+            ctypes.c_longlong(weight.numel()),
+            ctypes.c_void_p(checksum.data_ptr()),
+            ctypes.c_int(blocks),
+            ctypes.c_void_p(stream.cuda_stream),
+        )
+        if err != 0:
+            raise RuntimeError(f"scan_one_weight_launch failed with cuda error code {err}")
+        return checksum
+
+
+def resolve_nvcc() -> str:
+    for key in ("CUDACXX", "NVCC"):
+        value = os.environ.get(key)
+        if value:
+            return value
+    found = shutil.which("nvcc")
+    if found:
+        return found
+    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    if cuda_home:
+        candidate = Path(cuda_home) / "bin" / "nvcc"
+        if candidate.is_file():
+            return str(candidate)
+    raise RuntimeError(
+        "Could not find nvcc. Set CUDACXX/NVCC or add CUDA's bin directory to PATH."
+    )
+
+
+def resolve_cuda_arch() -> str:
     arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST")
     if arch_list:
         print(f"TORCH_CUDA_ARCH_LIST={arch_list}")
-    return load_inline(
-        name=name,
-        cpp_sources=CPP_SOURCE,
-        cuda_sources=CUDA_SOURCE,
-        functions=None,
-        extra_cuda_cflags=extra_cuda_cflags,
-        with_cuda=True,
-        verbose=False,
-    )
+        first = arch_list.replace(";", " ").split()[0]
+        normalized = first.split("+", 1)[0].replace(".", "")
+        return f"sm_{normalized}"
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability()
+        return f"sm_{major}{minor}"
+    return "sm_90"
+
+
+def load_scan_extension(name: str):
+    nvcc = resolve_nvcc()
+    arch = resolve_cuda_arch()
+    cache_root = Path(os.environ.get("LLMFFN_WEIGHT_SCAN_CACHE", Path.home() / ".cache" / "llmffn_weight_scan"))
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    digest = hashlib.sha256((CUDA_SOURCE + arch).encode("utf-8")).hexdigest()[:16]
+    cu_path = cache_root / f"{name}_{digest}.cu"
+    so_path = cache_root / f"{name}_{digest}.so"
+
+    if not so_path.exists():
+        cu_path.write_text(CUDA_SOURCE, encoding="utf-8")
+        cmd = [
+            nvcc,
+            "-O2",
+            "-std=c++17",
+            "-Xcompiler",
+            "-fPIC",
+            "-shared",
+            f"-arch={arch}",
+            str(cu_path),
+            "-o",
+            str(so_path),
+        ]
+        print("compiling weight scan kernel:", " ".join(cmd))
+        subprocess.run(cmd, check=True)
+    else:
+        print(f"using cached weight scan kernel: {so_path}")
+
+    return NvccScanExtension(so_path)
 
 
 def require_contiguous_weight(name: str, weight: torch.Tensor) -> torch.Tensor:

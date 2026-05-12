@@ -70,10 +70,10 @@ def check_args(args: argparse.Namespace) -> None:
         raise RuntimeError("This validation workload requires CUDA.")
 
 
-def make_tensor(shape: tuple[int, ...], device: torch.device, generator: torch.Generator) -> torch.Tensor:
-    tensor = torch.empty(shape, device=device, dtype=torch.float16)
-    tensor.normal_(mean=0.0, std=0.02, generator=generator)
-    return tensor
+def make_tensor(shape: tuple[int, ...], device: torch.device, fill_value: float) -> torch.Tensor:
+    # Initialize on CPU so CUTracer sees no non-TMA CUDA kernel before the first GEMM.
+    cpu_tensor = torch.full(shape, fill_value, device="cpu", dtype=torch.float16)
+    return cpu_tensor.to(device=device, non_blocking=False)
 
 
 def run_ffn_gemm_once(
@@ -104,13 +104,11 @@ def main() -> None:
 
     device = torch.device(args.device)
     torch.cuda.set_device(device)
-    generator = torch.Generator(device=device)
-    generator.manual_seed(args.seed)
 
-    x = make_tensor((1, args.batch_tokens, args.hidden_size), device, generator)
-    gate_weight = make_tensor((args.intermediate_size, args.hidden_size), device, generator)
-    up_weight = make_tensor((args.intermediate_size, args.hidden_size), device, generator)
-    down_weight = make_tensor((args.hidden_size, args.intermediate_size), device, generator)
+    x = make_tensor((1, args.batch_tokens, args.hidden_size), device, 0.01)
+    gate_weight = make_tensor((args.intermediate_size, args.hidden_size), device, 0.02)
+    up_weight = make_tensor((args.intermediate_size, args.hidden_size), device, 0.03)
+    down_weight = make_tensor((args.hidden_size, args.intermediate_size), device, 0.04)
 
     torch.cuda.synchronize(device)
     with torch.no_grad():
@@ -124,12 +122,12 @@ def main() -> None:
 
     torch.cuda.synchronize(device)
     assert out is not None
-    checksum = float(out.float().sum().item())
+    first_value = float(out.detach().reshape(-1)[:1].cpu()[0])
     print(f"device: {device}")
     print(f"shapes: x={tuple(x.shape)} gate/up=({args.intermediate_size}, {args.hidden_size}) down=({args.hidden_size}, {args.intermediate_size})")
     print(f"iterations: {args.iterations}")
     print(f"output shape: {tuple(out.shape)} dtype={out.dtype}")
-    print(f"checksum: {checksum:.6f}")
+    print(f"first value: {first_value:.6f}")
 
 
 if __name__ == "__main__":

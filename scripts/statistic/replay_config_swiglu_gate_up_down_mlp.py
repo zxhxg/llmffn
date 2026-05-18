@@ -29,7 +29,15 @@ def parse_args() -> argparse.Namespace:
             "MLP access pattern for CUTracer."
         ),
     )
-    parser.add_argument("--capture", type=Path, required=True, help="Path to the saved capture .pt file.")
+    parser.add_argument(
+        "--capture",
+        type=Path,
+        default=None,
+        help=(
+            "Optional saved capture .pt file. If omitted, this script synthesizes "
+            "a constant input tensor with shape (batch_size, seq_len, hidden_size)."
+        ),
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -40,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         "--layer",
         type=int,
         default=None,
-        help="Optional override for the layer stored in the capture file.",
+        help="Optional layer id used only for the NVTX range name. Defaults to capture['layer'] or 0.",
     )
     parser.add_argument(
         "--device-map",
@@ -63,7 +71,35 @@ def parse_args() -> argparse.Namespace:
         default="float16",
         help="Dtype for the synthetic MLP weights and replay input.",
     )
-    parser.add_argument("--seed", type=int, default=1234, help="CPU seed for synthetic random weights.")
+    parser.add_argument("--seed", type=int, default=1234, help="Seed for synthetic random weights.")
+    parser.add_argument(
+        "--init-device",
+        choices=["cuda", "cpu"],
+        default="cuda",
+        help=(
+            "Where to initialize synthetic weights and synthetic inputs. CUDA is "
+            "faster and uses the target GPU directly; CPU avoids CUDA random-init "
+            "kernels before the replay range, then copies tensors to CUDA."
+        ),
+    )
+    parser.add_argument(
+        "--input-fill",
+        type=float,
+        default=0.01,
+        help="Constant used when synthesizing an input tensor without --capture.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Synthetic input batch size used when --capture is omitted.",
+    )
+    parser.add_argument(
+        "--seq-len",
+        type=int,
+        default=1,
+        help="Synthetic input sequence length used when --capture is omitted.",
+    )
     return parser.parse_args()
 
 
@@ -100,8 +136,9 @@ def make_random_weight(
     dtype: torch.dtype,
     initializer_range: float,
     generator: torch.Generator,
+    device: torch.device,
 ) -> torch.Tensor:
-    weight = torch.empty(shape, device="cpu", dtype=dtype)
+    weight = torch.empty(shape, device=device, dtype=dtype)
     try:
         return weight.normal_(mean=0.0, std=initializer_range, generator=generator)
     except RuntimeError as exc:
@@ -109,7 +146,11 @@ def make_random_weight(
         unsupported_cpu_half_normal = "normal" in message and (
             "not implemented" in message or "unsupported" in message
         )
-        if dtype not in (torch.float16, torch.bfloat16) or not unsupported_cpu_half_normal:
+        if (
+            device.type != "cpu"
+            or dtype not in (torch.float16, torch.bfloat16)
+            or not unsupported_cpu_half_normal
+        ):
             raise
         del weight
         weight_fp32 = torch.empty(shape, device="cpu", dtype=torch.float32)
@@ -125,6 +166,7 @@ class RandomNoBiasLinear(nn.Module):
         dtype: torch.dtype,
         initializer_range: float,
         generator: torch.Generator,
+        device: torch.device,
     ) -> None:
         super().__init__()
         self.in_features = in_features
@@ -134,6 +176,7 @@ class RandomNoBiasLinear(nn.Module):
             dtype=dtype,
             initializer_range=initializer_range,
             generator=generator,
+            device=device,
         )
         self.weight = nn.Parameter(weight, requires_grad=False)
 
@@ -150,6 +193,7 @@ class LlamaSwiGLUGateUpDownMLP(nn.Module):
         dtype: torch.dtype,
         initializer_range: float,
         seed: int,
+        device: torch.device,
     ) -> None:
         super().__init__()
         if hidden_act != "silu":
@@ -158,7 +202,7 @@ class LlamaSwiGLUGateUpDownMLP(nn.Module):
                 f"hidden_act='silu', got {hidden_act!r}."
             )
 
-        generator = torch.Generator(device="cpu")
+        generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
         self.hidden_size = hidden_size
@@ -169,6 +213,7 @@ class LlamaSwiGLUGateUpDownMLP(nn.Module):
             dtype=dtype,
             initializer_range=initializer_range,
             generator=generator,
+            device=device,
         )
         self.up_proj = RandomNoBiasLinear(
             hidden_size,
@@ -176,6 +221,7 @@ class LlamaSwiGLUGateUpDownMLP(nn.Module):
             dtype=dtype,
             initializer_range=initializer_range,
             generator=generator,
+            device=device,
         )
         self.down_proj = RandomNoBiasLinear(
             intermediate_size,
@@ -183,6 +229,7 @@ class LlamaSwiGLUGateUpDownMLP(nn.Module):
             dtype=dtype,
             initializer_range=initializer_range,
             generator=generator,
+            device=device,
         )
         self.act_fn = nn.SiLU()
 
@@ -202,14 +249,66 @@ def ensure_cuda_available() -> torch.device:
     return device
 
 
+def load_optional_capture(capture_path: Path | None) -> dict[str, object] | None:
+    if capture_path is None:
+        return None
+    return torch.load(capture_path, map_location="cpu", weights_only=True)
+
+
+def resolve_layer(layer_arg: int | None, payload: dict[str, object] | None) -> int:
+    if layer_arg is not None:
+        return layer_arg
+    if payload is not None and "layer" in payload:
+        return int(payload["layer"])
+    return 0
+
+
+def build_input_tensor(
+    payload: dict[str, object] | None,
+    hidden_size: int,
+    dtype: torch.dtype,
+    target_device: torch.device,
+    init_device: torch.device,
+    input_fill: float,
+    batch_size: int,
+    seq_len: int,
+) -> torch.Tensor:
+    if payload is not None:
+        input_vector = payload["ffn_input"]
+        if not isinstance(input_vector, torch.Tensor):
+            raise RuntimeError("Capture payload did not contain a tensor field named 'ffn_input'.")
+        if input_vector.dim() != 1:
+            raise RuntimeError(f"Expected 1D ffn_input vector, got {tuple(input_vector.shape)}.")
+        if input_vector.numel() != hidden_size:
+            raise RuntimeError(
+                "Capture ffn_input width does not match config hidden_size: "
+                f"{input_vector.numel()} != {hidden_size}."
+            )
+        return input_vector.to(device=target_device, dtype=dtype).reshape(1, 1, -1)
+
+    if batch_size <= 0 or seq_len <= 0:
+        raise ValueError("--batch-size and --seq-len must be positive.")
+
+    input_tensor = torch.full(
+        (batch_size, seq_len, hidden_size),
+        input_fill,
+        device=init_device,
+        dtype=dtype,
+    )
+    if init_device != target_device:
+        input_tensor = input_tensor.to(device=target_device)
+    return input_tensor
+
+
 def replay_config_swiglu_gate_up_down_mlp(args: argparse.Namespace) -> torch.Tensor:
     configure_preferred_blas_library(args.preferred_blas)
     target_device = ensure_cuda_available()
     dtype = dtype_from_name(args.dtype)
 
-    payload = torch.load(args.capture, map_location="cpu", weights_only=True)
-    layer = args.layer if args.layer is not None else int(payload["layer"])
     mlp_config = load_mlp_config(args.config)
+    payload = load_optional_capture(args.capture)
+    layer = resolve_layer(args.layer, payload)
+    init_device = target_device if args.init_device == "cuda" else torch.device("cpu")
 
     target_mlp = LlamaSwiGLUGateUpDownMLP(
         hidden_size=int(mlp_config["hidden_size"]),
@@ -218,21 +317,21 @@ def replay_config_swiglu_gate_up_down_mlp(args: argparse.Namespace) -> torch.Ten
         dtype=dtype,
         initializer_range=float(mlp_config["initializer_range"]),
         seed=args.seed,
+        device=init_device,
     ).eval()
-    target_mlp = target_mlp.to(device=target_device)
+    if init_device != target_device:
+        target_mlp = target_mlp.to(device=target_device)
 
-    input_vector = payload["ffn_input"]
-    if not isinstance(input_vector, torch.Tensor):
-        raise RuntimeError("Capture payload did not contain a tensor field named 'ffn_input'.")
-    if input_vector.dim() != 1:
-        raise RuntimeError(f"Expected 1D ffn_input vector, got {tuple(input_vector.shape)}.")
-    if input_vector.numel() != int(mlp_config["hidden_size"]):
-        raise RuntimeError(
-            "Capture ffn_input width does not match config hidden_size: "
-            f"{input_vector.numel()} != {mlp_config['hidden_size']}."
-        )
-
-    input_tensor = input_vector.to(device=target_device, dtype=dtype).reshape(1, 1, -1)
+    input_tensor = build_input_tensor(
+        payload=payload,
+        hidden_size=int(mlp_config["hidden_size"]),
+        dtype=dtype,
+        target_device=target_device,
+        init_device=init_device,
+        input_fill=args.input_fill,
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
+    )
 
     torch.cuda.synchronize(target_device)
     with torch.no_grad():
@@ -249,9 +348,10 @@ def replay_config_swiglu_gate_up_down_mlp(args: argparse.Namespace) -> torch.Ten
 def main() -> None:
     args = parse_args()
     output = replay_config_swiglu_gate_up_down_mlp(args)
-    print(f"capture: {args.capture}")
+    print(f"capture: {args.capture if args.capture is not None else '<synthetic input>'}")
     print(f"config: {args.config}")
     print(f"device-map: {args.device_map} -> cuda:0")
+    print(f"init-device: {args.init_device}")
     print(f"replayed output shape: {tuple(output.shape)}")
     print(f"replayed output dtype: {output.dtype}")
 

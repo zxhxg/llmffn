@@ -14,6 +14,7 @@ from common import (
     ensure_cuda_module,
     get_target_mlp,
     load_model_and_tokenizer,
+    positive_int,
     resolve_default_model_id,
 )
 
@@ -50,11 +51,37 @@ def parse_args() -> argparse.Namespace:
         default="cublas",
         help="Preferred CUDA BLAS backend requested through torch.backends.cuda.preferred_blas_library.",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=positive_int,
+        default=1,
+        help=(
+            "Replay batch size. The saved 1D ffn_input is repeated into "
+            "[batch_size, 1, hidden_size] before the target MLP call."
+        ),
+    )
     return parser.parse_args()
 
 
 def replay_target_mlp_once(target_mlp, input_tensor: torch.Tensor) -> torch.Tensor:
     return target_mlp(input_tensor)
+
+
+def build_replay_input_tensor(
+    input_vector: torch.Tensor,
+    target_device: torch.device,
+    input_dtype: torch.dtype,
+    batch_size: int,
+) -> torch.Tensor:
+    if not isinstance(input_vector, torch.Tensor):
+        raise RuntimeError("Capture payload did not contain a tensor field named 'ffn_input'.")
+    if input_vector.dim() != 1:
+        raise RuntimeError(f"Expected 1D ffn_input vector, got {tuple(input_vector.shape)}.")
+    if batch_size <= 0:
+        raise RuntimeError(f"--batch-size must be positive, got {batch_size}.")
+
+    single_input = input_vector.to(device=target_device, dtype=input_dtype).reshape(1, 1, -1)
+    return single_input.repeat(batch_size, 1, 1).contiguous()
 
 
 def replay_single_ffn_mlp(args: argparse.Namespace) -> torch.Tensor:
@@ -84,14 +111,13 @@ def replay_single_ffn_mlp(args: argparse.Namespace) -> torch.Tensor:
         target_mlp = target_mlp.to("cuda:0")
     target_device = ensure_cuda_module(target_mlp, f"layer {layer} mlp")
 
-    input_vector = payload["ffn_input"]
-    if not isinstance(input_vector, torch.Tensor):
-        raise RuntimeError("Capture payload did not contain a tensor field named 'ffn_input'.")
-    if input_vector.dim() != 1:
-        raise RuntimeError(f"Expected 1D ffn_input vector, got {tuple(input_vector.shape)}.")
-
     input_dtype = next(target_mlp.parameters()).dtype
-    input_tensor = input_vector.to(device=target_device, dtype=input_dtype).reshape(1, 1, -1)
+    input_tensor = build_replay_input_tensor(
+        payload["ffn_input"],
+        target_device,
+        input_dtype,
+        args.batch_size,
+    )
 
     with torch.no_grad():
         nvtx_range = f"ffn_replay_layer_{layer}"
@@ -108,6 +134,7 @@ def main() -> None:
     args = parse_args()
     output = replay_single_ffn_mlp(args)
     print(f"capture: {args.capture}")
+    print(f"batch_size: {args.batch_size}")
     print(f"replayed output shape: {tuple(output.shape)}")
     print(f"replayed output dtype: {output.dtype}")
 

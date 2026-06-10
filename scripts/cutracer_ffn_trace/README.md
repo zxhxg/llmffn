@@ -34,7 +34,8 @@ If you want a single command that runs the whole workflow end-to-end, use:
 python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --layer 0 \
   --device-map auto \
-  --cutracer-so /path/to/cutracer.so
+  --cutracer-so /path/to/cutracer.so \
+  --batch-size 4
 ```
 
 If you follow this repository's default layout, build CUTracer under
@@ -62,6 +63,12 @@ Each run directory includes:
 `processed_ffn_mem_sequence.jsonl` by default, so you can inspect a manageable
 slice of a very large processed trace. You can change that limit with
 `--processed-preview-lines`.
+
+`--batch-size` only affects the replay step. Capture still saves one 1D FFN
+input vector, and replay repeats that vector into
+`[batch_size, 1, hidden_size]` before calling the target MLP. The default is
+`1`, which preserves the original behavior and remains compatible with existing
+`capture.pt` files.
 
 ## Step-by-step flow
 
@@ -97,9 +104,10 @@ cutracer trace \
   --kernel-events full \
   --cpu-callstack auto \
   --output-dir scripts/cutracer_ffn_trace/output/raw_trace/layer0_run \
-  -- python3 scripts/cutracer_ffn_trace/replay_single_ffn_mlp.py \
+  -- python3 scripts/statistic/replay_single_ffn_mlp.py \
     --capture scripts/cutracer_ffn_trace/output/captures/layer_0_first_generated_token_capture.pt \
-    --device-map auto
+    --device-map auto \
+    --batch-size 4
 ```
 
 ### 3. Postprocess the raw trace

@@ -45,6 +45,7 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --cutracer-so "$CUTRACER_SO" \
   --no-data-timeout-s 120 \
   --no-dump-cubin \
+  --batch-size 4 \
   --processed-preview-lines 50 \
   --delete-raw-trace-after-postprocess
 ```
@@ -87,6 +88,7 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
 - `--prompt`：capture 阶段使用的 prompt。
 - `--device-map {auto,cuda}`：模型放置策略。服务器和 8B 模型优先用 `auto`。
 - `--cutracer-so`：`cutracer.so` 路径。
+- `--batch-size`：只影响 replay 阶段；把同一个 capture 到的 1D FFN 输入复制成 `[batch_size, 1, hidden_size]` 后再调用目标 MLP，默认 `1`，兼容旧 `capture.pt`。
 - `--no-data-timeout-s`：CUTracer 无数据超时秒数；H100 上建议从 `120` 起。
 - `--no-dump-cubin`：关闭 cubin dump，H100 上强烈建议开启。
 - `--trace-size-limit-mb`：限制 CUTracer trace 大小；触发后结果不完整，只适合调试。
@@ -140,7 +142,8 @@ python3 scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py \
 ```bash
 python3 scripts/statistic/replay_single_ffn_mlp.py \
   --capture scripts/cutracer_ffn_trace/output/captures/layer24_capture.pt \
-  --device-map auto
+  --device-map auto \
+  --batch-size 4
 ```
 
 手动包一层 CUTracer：
@@ -157,7 +160,8 @@ cutracer trace \
   --output-dir scripts/cutracer_ffn_trace/output/raw_trace/layer24_manual \
   -- python3 scripts/statistic/replay_single_ffn_mlp.py \
     --capture scripts/cutracer_ffn_trace/output/captures/layer24_capture.pt \
-    --device-map auto
+    --device-map auto \
+    --batch-size 4
 ```
 
 注意：`run_full` 的输出是缓存打印的，trace 阶段不会实时刷屏。判断是否还在运行，使用：

@@ -16,6 +16,7 @@ from common import (
     DEFAULT_RUNS_DIR,
     SCRIPT_DIR,
     ensure_parent_dir,
+    positive_int,
     resolve_default_model_id,
 )
 
@@ -60,6 +61,15 @@ def parse_args() -> argparse.Namespace:
             "Replay implementation wrapped by CUTracer. 'mlp' runs the real target_mlp call; "
             "'weight-scan' runs explicit LDG scans over gate/up/down weights to record "
             "complete weight global-memory addresses."
+        ),
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=positive_int,
+        default=1,
+        help=(
+            "Replay batch size for --replay-mode mlp. The captured 1D FFN input "
+            "is repeated into [batch_size, 1, hidden_size] before the target MLP call."
         ),
     )
     parser.add_argument(
@@ -141,7 +151,13 @@ def parse_args() -> argparse.Namespace:
             "The run summary keeps the raw trace size/count statistics collected before deletion."
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.replay_mode == "weight-scan" and args.batch_size != 1:
+        parser.error(
+            "--batch-size only applies to --replay-mode mlp; "
+            "weight-scan traces weights directly and requires --batch-size 1."
+        )
+    return args
 
 
 def repo_root() -> Path:
@@ -440,6 +456,8 @@ def main() -> None:
     )
     if args.replay_mode == "weight-scan":
         trace_cmd.extend(["--blocks", str(args.weight_scan_blocks)])
+    else:
+        trace_cmd.extend(["--batch-size", str(args.batch_size)])
     trace_env = build_child_env()
     trace_environment_overrides: dict[str, str] = {}
     if os.environ.get("TORCH_BLAS_PREFER_CUBLASLT") is not None:
@@ -489,6 +507,7 @@ def main() -> None:
         "device_map": args.device_map,
         "preferred_blas": args.preferred_blas,
         "replay_mode": args.replay_mode,
+        "batch_size": args.batch_size,
         "weight_scan_blocks": args.weight_scan_blocks if args.replay_mode == "weight-scan" else None,
         "cutracer_so": str(cutracer_so),
         "paths": {key: str(value) for key, value in paths.items()},

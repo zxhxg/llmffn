@@ -64,11 +64,12 @@ Each run directory includes:
 slice of a very large processed trace. You can change that limit with
 `--processed-preview-lines`.
 
-`--batch-size` only affects the replay step. Capture still saves one 1D FFN
-input vector, and replay repeats that vector into
-`[batch_size, 1, hidden_size]` before calling the target MLP. The default is
-`1`, which preserves the original behavior and remains compatible with existing
-`capture.pt` files.
+`--batch-size 1` preserves the historical behavior: capture saves the final
+prompt token's 1D FFN input and replay reshapes it to `[1, 1, hidden_size]`.
+With `--batch-size > 1`, capture runs real batched prefill by repeating the same
+prompt in the tokenizer batch, saves the actual target MLP input tensor
+`[batch_size, prompt_tokens, hidden_size]`, and replay consumes that tensor
+directly. Existing 1D `capture.pt` files are only valid with `--batch-size 1`.
 
 ## Step-by-step flow
 
@@ -77,7 +78,8 @@ input vector, and replay repeats that vector into
 ```bash
 python3 scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py \
   --layer 0 \
-  --prompt "Explain briefly what the FFN layer does in a transformer."
+  --prompt "Explain briefly what the FFN layer does in a transformer." \
+  --batch-size 4
 ```
 
 If your GPU cannot hold the whole model in FP16, retry with:
@@ -86,7 +88,8 @@ If your GPU cannot hold the whole model in FP16, retry with:
 python3 scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py \
   --layer 0 \
   --device-map auto \
-  --prompt "Explain briefly what the FFN layer does in a transformer."
+  --prompt "Explain briefly what the FFN layer does in a transformer." \
+  --batch-size 4
 ```
 
 This writes a `.pt` capture under:

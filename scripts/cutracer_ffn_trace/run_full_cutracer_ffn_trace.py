@@ -68,8 +68,9 @@ def parse_args() -> argparse.Namespace:
         type=positive_int,
         default=1,
         help=(
-            "Replay batch size for --replay-mode mlp. The captured 1D FFN input "
-            "is repeated into [batch_size, 1, hidden_size] before the target MLP call."
+            "Batch size for --replay-mode mlp. Batch size 1 preserves the historical "
+            "last-token replay. Batch size >1 runs real batched prefill during capture "
+            "and replays the captured [batch_size, prompt_tokens, hidden_size] MLP input."
         ),
     )
     parser.add_argument(
@@ -401,6 +402,8 @@ def main() -> None:
         str(paths["capture"]),
         "--preferred-blas",
         args.preferred_blas,
+        "--batch-size",
+        str(args.batch_size),
     ]
     capture_env = build_child_env()
     capture_result = run_command(capture_cmd, repo_root(), "capture", env=capture_env)

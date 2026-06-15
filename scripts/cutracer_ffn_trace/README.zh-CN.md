@@ -77,6 +77,7 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
   --cutracer-so "$CUTRACER_SO" \
   --no-data-timeout-s 120 \
   --no-dump-cubin \
+  --batch-size 4 \
   --processed-preview-lines 50 \
   --delete-raw-trace-after-postprocess
 ```
@@ -88,7 +89,7 @@ python3 scripts/cutracer_ffn_trace/run_full_cutracer_ffn_trace.py \
 - `--prompt`：capture 阶段使用的 prompt。
 - `--device-map {auto,cuda}`：模型放置策略。服务器和 8B 模型优先用 `auto`。
 - `--cutracer-so`：`cutracer.so` 路径。
-- `--batch-size`：只影响 replay 阶段；把同一个 capture 到的 1D FFN 输入复制成 `[batch_size, 1, hidden_size]` 后再调用目标 MLP，默认 `1`，兼容旧 `capture.pt`。
+- `--batch-size`：`1` 时保持旧语义，只 capture 最后一个 prompt token 的 1D FFN 输入并 replay 为 `[1, 1, hidden_size]`；大于 `1` 时使用同一个 prompt 复制成真实 batch，capture 目标 MLP 在 batched prefill 中实际收到的 `[batch_size, prompt_tokens, hidden_size]`，replay 直接消费该 tensor。
 - `--no-data-timeout-s`：CUTracer 无数据超时秒数；H100 上建议从 `120` 起。
 - `--no-dump-cubin`：关闭 cubin dump，H100 上强烈建议开启。
 - `--trace-size-limit-mb`：限制 CUTracer trace 大小；触发后结果不完整，只适合调试。
@@ -120,18 +121,21 @@ python3 scripts/cutracer_ffn_trace/capture_first_generated_ffn_input.py \
   --layer 24 \
   --device-map auto \
   --prompt "Explain briefly what the FFN layer does in a transformer." \
+  --batch-size 4 \
   --output scripts/cutracer_ffn_trace/output/captures/layer24_capture.pt
 ```
 
 输出字段包括：
 
-- `ffn_input`：目标 layer FFN 输入向量，1D tensor。
+- `ffn_input`：`batch_size=1` 时为目标 layer 最后 prompt token 的 1D FFN 输入；`batch_size>1` 时为真实 batched prefill 中目标 MLP 收到的 `[batch_size, prompt_tokens, hidden_size]`。
 - `layer`：目标层编号。
 - `prompt`：本次 prompt。
+- `batch_size`：capture 使用的 batch size。
 - `prompt_token_count`：prompt token 数量。
 - `model_id`：模型路径。
-- `hidden_size`：输入向量长度。
-- `token_semantics`：固定为 `first_generated_token_from_prefill_last_prompt_token`。
+- `hidden_size`：`ffn_input` 最后一维大小。
+- `ffn_input_shape`：保存的 `ffn_input` 形状。
+- `token_semantics`：`batch_size=1` 为 `first_generated_token_from_prefill_last_prompt_token`；`batch_size>1` 为 `batched_prefill_full_prompt_tokens`。
 
 ### `replay_single_ffn_mlp.py`
 

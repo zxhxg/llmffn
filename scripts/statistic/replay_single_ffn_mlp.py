@@ -56,8 +56,9 @@ def parse_args() -> argparse.Namespace:
         type=positive_int,
         default=1,
         help=(
-            "Replay batch size. The saved 1D ffn_input is repeated into "
-            "[batch_size, 1, hidden_size] before the target MLP call."
+            "Replay batch size. Old 1D captures only support batch size 1. "
+            "New batched prefill captures must already contain an FFN input tensor "
+            "with shape [batch_size, prompt_tokens, hidden_size]."
         ),
     )
     return parser.parse_args()
@@ -68,20 +69,46 @@ def replay_target_mlp_once(target_mlp, input_tensor: torch.Tensor) -> torch.Tens
 
 
 def build_replay_input_tensor(
-    input_vector: torch.Tensor,
+    ffn_input: torch.Tensor,
+    capture_batch_size: int,
     target_device: torch.device,
     input_dtype: torch.dtype,
     batch_size: int,
 ) -> torch.Tensor:
-    if not isinstance(input_vector, torch.Tensor):
+    if not isinstance(ffn_input, torch.Tensor):
         raise RuntimeError("Capture payload did not contain a tensor field named 'ffn_input'.")
-    if input_vector.dim() != 1:
-        raise RuntimeError(f"Expected 1D ffn_input vector, got {tuple(input_vector.shape)}.")
     if batch_size <= 0:
         raise RuntimeError(f"--batch-size must be positive, got {batch_size}.")
 
-    single_input = input_vector.to(device=target_device, dtype=input_dtype).reshape(1, 1, -1)
-    return single_input.repeat(batch_size, 1, 1).contiguous()
+    if ffn_input.dim() == 1:
+        if batch_size != 1:
+            raise RuntimeError(
+                "This capture contains only a 1D single-token ffn_input. "
+                f"Rerun capture/run_full with --batch-size {batch_size} to capture real batched prefill."
+            )
+        if capture_batch_size != 1:
+            raise RuntimeError(
+                f"Capture metadata batch_size={capture_batch_size} is inconsistent with 1D ffn_input."
+            )
+        return ffn_input.to(device=target_device, dtype=input_dtype).reshape(1, 1, -1).contiguous()
+
+    if ffn_input.dim() == 3:
+        if capture_batch_size != batch_size:
+            raise RuntimeError(
+                f"Capture batch_size={capture_batch_size} does not match requested --batch-size {batch_size}."
+            )
+        if int(ffn_input.shape[0]) != batch_size:
+            raise RuntimeError(
+                f"Captured ffn_input batch dimension is {int(ffn_input.shape[0])}, expected {batch_size}."
+            )
+        if ffn_input.shape[-1] <= 0:
+            raise RuntimeError(f"Unexpected captured ffn_input shape: {tuple(ffn_input.shape)}")
+        return ffn_input.to(device=target_device, dtype=input_dtype).contiguous()
+
+    raise RuntimeError(
+        "Expected ffn_input to be either a legacy 1D tensor or a batched prefill "
+        f"3D tensor, got {tuple(ffn_input.shape)}."
+    )
 
 
 def replay_single_ffn_mlp(args: argparse.Namespace) -> torch.Tensor:
@@ -114,6 +141,7 @@ def replay_single_ffn_mlp(args: argparse.Namespace) -> torch.Tensor:
     input_dtype = next(target_mlp.parameters()).dtype
     input_tensor = build_replay_input_tensor(
         payload["ffn_input"],
+        int(payload.get("batch_size", 1)),
         target_device,
         input_dtype,
         args.batch_size,
